@@ -2,32 +2,90 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Weekend Dinner Picker — Realtime</title>
-  <meta name="description" content="多人实时约饭决策器：建备选，1~10分打分，自动统计平均分并选优胜（Firebase 实时共享）。" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50' font-size='48'%3E🍽️%3C/text%3E%3C/svg%3E">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>这周末吃什么？ · Realtime</title>
+  <!-- Tailwind（CDN） -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React 18 -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel (in-browser JSX) -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Firebase v9 (modular) CDN -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-  <style>
-    html,body{height:100%}
-    .container{max-width:1100px}
-  </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
-  <div id="root"></div>
+  <div class="max-w-5xl mx-auto px-4 pb-24">
+    <!-- 头部：左侧头像图 + 标题 + 房间信息 + 三个阶段按钮 -->
+    <header class="py-6 flex items-center justify-between gap-4">
+      <div class="min-w-0">
+        <div class="flex items-center gap-3">
+          <!-- 把你的图片命名为 title.jpg 放在同目录 -->
+          <img src="title.jpg" alt="title icon" class="h-12 w-12 rounded-xl object-cover shadow" />
+          <!-- 可编辑标题 -->
+          <input id="titleInput"
+                 class="w-full min-w-0 text-2xl md:text-3xl font-bold bg-transparent border-b border-slate-300 focus:outline-none focus:border-indigo-500 px-1"
+                 value="这周末吃什么？" />
+        </div>
+        <div class="text-sm text-slate-500 mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
+          房间：<span id="roomSpan" class="font-mono bg-white rounded px-1 py-0.5"></span> · 把当前链接发给朋友即可同步打分
+        </div>
+      </div>
 
-  <script type="text/babel">
-    const { useEffect, useMemo, useState, useRef } = React;
+      <div class="flex gap-2 shrink-0">
+        <button id="btnSetup"
+                class="px-3 py-2 rounded-xl border bg-indigo-600 text-white border-indigo-600">
+          ① 建立备选
+        </button>
+        <button id="btnVote"
+                class="px-3 py-2 rounded-xl border bg-white text-indigo-600 border-indigo-600">
+          ② 打分投票
+        </button>
+        <button id="btnResults"
+                class="px-3 py-2 rounded-xl border bg-white text-indigo-600 border-indigo-600">
+          ③ 查看结果
+        </button>
+      </div>
+    </header>
 
-    // 1) —— 在这里填入你的 Firebase 配置 ——
+    <!-- 建立备选 -->
+    <section id="panelSetup" class="space-y-4">
+      <div class="flex items-center gap-2">
+        <input id="restInput" class="flex-1 bg-white px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-200"
+               placeholder="输入餐厅名称并添加" />
+        <button id="btnAdd" class="px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
+          添加
+        </button>
+      </div>
+      <div id="setupList" class="bg-white rounded-xl border divide-y"></div>
+      <p id="setupEmpty" class="text-slate-500">还没有备选。先添加几家餐厅吧。</p>
+    </section>
+
+    <!-- 打分投票 -->
+    <section id="panelVote" class="space-y-4 hidden">
+      <div id="voteList" class="bg-white rounded-xl border divide-y"></div>
+      <p id="voteEmpty" class="text-slate-500">当前还没有餐厅可投票。</p>
+    </section>
+
+    <!-- 结果 -->
+    <section id="panelResults" class="space-y-4 hidden">
+      <div class="flex gap-2">
+        <button id="btnClearVotes" class="px-3 py-2 rounded-lg border bg-white text-indigo-600 border-indigo-600">
+          只清空投票（保留备选）
+        </button>
+        <button id="btnResetAll" class="px-3 py-2 rounded-lg border bg-rose-600 text-white border-rose-600">
+          重置（备选与投票全部清空）
+        </button>
+      </div>
+      <div id="resultList" class="bg-white rounded-xl border divide-y"></div>
+      <p id="resultEmpty" class="text-slate-500">暂无结果。</p>
+    </section>
+  </div>
+
+  <!-- Firebase v10（CDN 模块） -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+    import {
+      getAuth, signInAnonymously, onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+    import {
+      getDatabase, ref, onValue, set, update, remove, get, child
+    } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+
+    /* 1) 替换为你的配置 */
     const firebaseConfig = {
       apiKey: "AIzaSyA_C6M0rRXkhfFU_9pFuFBX5FxMOyWoeaY",
       authDomain: "dinner-picker-7dd8f.firebaseapp.com",
@@ -38,343 +96,234 @@
       appId: "1:505582469870:web:bc6912eaa3282c6f8ba9ff"
     };
 
-    // 2) 初始化 Firebase（匿名登录）
-    const app = firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.database();
+    /* 2) 初始化 */
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
 
-    function useAnonAuth() {
-      const [user, setUser] = useState(null);
-      useEffect(() => {
-        const off = auth.onAuthStateChanged(u => setUser(u));
-        auth.signInAnonymously().catch(console.error);
-        return () => off();
-      }, []);
-      return user;
-    }
+    /* 3) DOM */
+    const titleInput = document.querySelector('#titleInput');
+    const roomSpan = document.querySelector('#roomSpan');
 
-    // 小工具
-    const uid = () => Math.random().toString(36).slice(2, 9);
-    const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+    const btnSetup   = document.querySelector('#btnSetup');
+    const btnVote    = document.querySelector('#btnVote');
+    const btnResults = document.querySelector('#btnResults');
 
-    // 房间数据订阅 hook
-    function useRoom(roomId) {
-      const [title, setTitle] = useState("这周末吃什么？");
-      const [restaurants, setRestaurants] = useState({}); // map: id -> {id,name}
-      const [votes, setVotes] = useState({});             // map: id -> {id,voter,uid,scores}
+    const panelSetup   = document.querySelector('#panelSetup');
+    const panelVote    = document.querySelector('#panelVote');
+    const panelResults = document.querySelector('#panelResults');
 
-      useEffect(() => {
-        if (!roomId) return;
-        const rTitle = db.ref(`rooms/${roomId}/title`);
-        const rRests = db.ref(`rooms/${roomId}/restaurants`);
-        const rVotes = db.ref(`rooms/${roomId}/votes`);
+    const restInput = document.querySelector('#restInput');
+    const btnAdd    = document.querySelector('#btnAdd');
+    const setupList = document.querySelector('#setupList');
+    const setupEmpty = document.querySelector('#setupEmpty');
 
-        const off1 = rTitle.on('value', s => setTitle(s.val() || "这周末吃什么？"));
-        const off2 = rRests.on('value', s => setRestaurants(s.val() || {}));
-        const off3 = rVotes.on('value', s => setVotes(s.val() || {}));
-        return () => { rTitle.off('value', off1); rRests.off('value', off2); rVotes.off('value', off3); };
-      }, [roomId]);
+    const voteList = document.querySelector('#voteList');
+    const voteEmpty = document.querySelector('#voteEmpty');
 
-      return { title, setTitleRemote: (t)=>db.ref(`rooms/${roomId}/title`).set(t), restaurants, votes };
-    }
+    const resultList = document.querySelector('#resultList');
+    const resultEmpty = document.querySelector('#resultEmpty');
 
-    function App() {
-      const user = useAnonAuth();
-      const [phase, setPhase] = useState('setup'); // setup | vote | results
-      const [roomId, setRoomId] = useState(new URLSearchParams(location.search).get('room') || '');
-      const [joined, setJoined] = useState(!!roomId);
+    const btnClearVotes = document.querySelector('#btnClearVotes');
+    const btnResetAll   = document.querySelector('#btnResetAll');
 
-      const { title, setTitleRemote, restaurants, votes } = useRoom(joined ? roomId : null);
+    /* 4) 房间 ID */
+    const params = new URLSearchParams(location.search);
+    const roomId = params.get('room') || 'default_room';
+    roomSpan.textContent = roomId;
 
-      // 计算统计
-      const stats = useMemo(() => {
-        const restList = Object.values(restaurants);
-        const byId = Object.fromEntries(restList.map(r => [r.id, { ...r, sum: 0, cnt: 0 }]));
-        Object.values(votes).forEach(v => {
-          Object.entries(v.scores || {}).forEach(([rid, score]) => {
-            if (byId[rid] && typeof score === 'number') {
-              byId[rid].sum += score; byId[rid].cnt += 1;
-            }
-          });
-        });
-        const rows = Object.values(byId).map(r => ({ id: r.id, name: r.name, cnt: r.cnt, avg: r.cnt? r.sum/r.cnt : 0 }));
-        rows.sort((a,b)=> b.avg - a.avg || a.name.localeCompare(b.name));
-        const winner = rows[0] && rows[0].cnt>0 ? rows[0] : null;
-        return { rows, winner };
-      }, [restaurants, votes]);
+    /* 5) 登录（匿名） */
+    let uid = null;
+    signInAnonymously(auth).catch(console.error);
+    onAuthStateChanged(auth, (user) => { uid = user?.uid || null; });
 
-      // —— 房间加入/创建 ——
-      const [roomInput, setRoomInput] = useState(roomId);
-      const createRoom = async () => {
-        const id = (roomInput || '').trim() || 'room-' + uid();
-        const now = Date.now();
-        await db.ref(`rooms/${id}`).update({
-          title: '这周末吃什么？',
-          createdAt: now
-        });
-        setRoomId(id); setJoined(true);
-        const url = new URL(location.href); url.searchParams.set('room', id); history.replaceState({}, '', url);
-      };
-      const joinRoom = async () => {
-        const id = (roomInput || '').trim(); if (!id) return alert('请输入房间名');
-        // 检查存在，不存在也允许加入（懒创建）
-        const snap = await db.ref(`rooms/${id}`).get();
-        if (!snap.exists()) {
-          if (!confirm('房间不存在，是否创建？')) return; 
-          await db.ref(`rooms/${id}`).set({ title: '这周末吃什么？', createdAt: Date.now() });
-        }
-        setRoomId(id); setJoined(true);
-        const url = new URL(location.href); url.searchParams.set('room', id); history.replaceState({}, '', url);
-      };
+    /* 数据路径 */
+    const roomRef     = ref(db, `rooms/${roomId}`);
+    const titleRef    = ref(db, `rooms/${roomId}/title`);
+    const restRef     = ref(db, `rooms/${roomId}/restaurants`);
+    const votesRef    = ref(db, `rooms/${roomId}/votes`);
 
-      if (!user) return <div className="container mx-auto p-6">正在连接…</div>;
-      if (!joined) {
-        return (
-          <div className="container mx-auto p-6 space-y-6">
-            <h1 className="text-3xl font-bold">Weekend Dinner Picker — 实时共享版</h1>
-            <p className="text-slate-600">输入房间名来创建或加入（把带有 <code>?room=房间名</code> 的链接分享给朋友即可共同打分）。</p>
-            <div className="flex gap-2 max-w-xl">
-              <input className="flex-1 px-3 py-2 rounded-xl border border-slate-300 focus:border-indigo-500" placeholder="如：2025-周末火锅局" value={roomInput} onChange={e=>setRoomInput(e.target.value)} />
-              <button className="px-4 py-2 rounded-xl bg-indigo-600 text-white" onClick={createRoom}>创建房间</button>
-              <button className="px-4 py-2 rounded-xl bg-slate-800 text-white" onClick={joinRoom}>加入房间</button>
+    /* 6) 同步标题 */
+    // 推 -> 云
+    titleInput.addEventListener('input', (e) => {
+      set(titleRef, e.target.value);
+    });
+    // 云 -> 拉
+    onValue(titleRef, (snap) => {
+      const v = snap.val();
+      if (typeof v === 'string' && v !== titleInput.value) titleInput.value = v;
+    });
+
+    /* 7) 添加餐厅 */
+    btnAdd.addEventListener('click', async () => {
+      const name = (restInput.value || '').trim();
+      if (!name) return;
+      const id = (Date.now() + '_' + Math.random().toString(36).slice(2, 7));
+      await set(ref(db, `rooms/${roomId}/restaurants/${id}`), {
+        name, createdAt: Date.now()
+      });
+      restInput.value = '';
+    });
+
+    /* 8) 监听餐厅列表 */
+    onValue(restRef, (snap) => {
+      const data = snap.val() || {};
+      renderSetupList(data);
+      renderVoteList(data);
+      renderResults(data);
+    });
+    /* 9) 监听投票变化 */
+    onValue(votesRef, () => {
+      // 只需更新投票区 & 结果区
+      get(restRef).then(s => {
+        const data = s.val() || {};
+        renderVoteList(data);
+        renderResults(data);
+      });
+    });
+
+    /* 渲染：建立备选 */
+    function renderSetupList(restaurants) {
+      const entries = Object.entries(restaurants || {});
+      setupList.innerHTML = '';
+      setupEmpty.classList.toggle('hidden', entries.length > 0);
+
+      entries
+        .sort((a,b)=> (a[1].createdAt||0)-(b[1].createdAt||0))
+        .forEach(([id, item]) => {
+          const row = document.createElement('div');
+          row.className = 'flex items-center justify-between px-4 py-3';
+          row.innerHTML = `
+            <div class="font-medium">${escapeHtml(item.name)}</div>
+            <div class="flex items-center gap-2">
+              <button data-id="${id}" class="px-3 py-1.5 rounded-lg border text-rose-600 border-rose-600 hover:bg-rose-50">
+                删除
+              </button>
             </div>
-            <div className="text-xs text-slate-500">需要先在 Firebase 控制台填好本页里的配置并启用匿名登录与 Realtime Database。详见文件顶部注释。</div>
+          `;
+          row.querySelector('button').addEventListener('click', async (e)=>{
+            const rid = e.currentTarget.getAttribute('data-id');
+            await remove(ref(db, `rooms/${roomId}/restaurants/${rid}`));
+            await remove(ref(db, `rooms/${roomId}/votes/${rid}`)); // 顺手清理该餐厅的票
+          });
+          setupList.appendChild(row);
+        });
+    }
+
+    /* 渲染：投票 */
+    async function renderVoteList(restaurants) {
+      const restEntries = Object.entries(restaurants || {});
+      voteList.innerHTML = '';
+      voteEmpty.classList.toggle('hidden', restEntries.length > 0);
+      // 取我自己的票
+      const myVotesSnap = await get(ref(db, `rooms/${roomId}/userVotes/${uid}`));
+      const myVotes = myVotesSnap.val() || {};
+
+      for (const [rid, item] of restEntries) {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between px-4 py-3';
+        row.innerHTML = `
+          <div class="font-medium">${escapeHtml(item.name)}</div>
+          <div class="flex items-center gap-2">
+            <input type="number" min="1" max="10" step="1"
+                   class="w-20 bg-white px-3 py-2 rounded-lg border text-center"
+                   value="${myVotes[rid] || ''}" placeholder="1~10" />
+            <button class="px-3 py-2 rounded-lg bg-indigo-600 text-white">提交</button>
           </div>
-        );
+        `;
+        const input = row.querySelector('input');
+        const btn = row.querySelector('button');
+        btn.addEventListener('click', async ()=>{
+          const v = Number(input.value);
+          if (!Number.isFinite(v) || v < 1 || v > 10) return alert('请输入 1~10 的整数');
+          // 记录“每人最后一次评分”为准
+          await update(ref(db, `rooms/${roomId}/votes/${rid}`), { [uid]: v });
+          await update(ref(db, `rooms/${roomId}/userVotes/${uid}`), { [rid]: v });
+        });
+        voteList.appendChild(row);
       }
-
-      // —— 房间内 UI ——
-      return (
-        <div className="container mx-auto px-4 pb-24">
-          <header className="py-6 flex items-center justify-between">
-            <div>
-              <input className="text-2xl md:text-3xl font-bold bg-transparent border-b border-slate-300 focus:outline-none focus:border-indigo-500 px-1"
-                     value={title}
-                     onChange={(e)=>setTitleRemote(e.target.value)} />
-              <div className="text-sm text-slate-500 mt-1">房间：<span className="font-mono bg-white rounded px-1 py-0.5">{roomId}</span> · 把当前链接发给朋友即可同步打分</div>
-            </div>
-            <div className="flex gap-2">
-              <button className={`px-3 py-2 rounded-xl border ${phase==='setup'? 'bg-indigo-600 text-white border-indigo-600':'bg-white border-slate-300'}`} onClick={()=>setPhase('setup')}>① 建立备选</button>
-              <button className={`px-3 py-2 rounded-xl border ${phase==='vote'? 'bg-indigo-600 text-white border-indigo-600':'bg-white border-slate-300'}`} onClick={()=>setPhase('vote')}>② 打分投票</button>
-              <button className={`px-3 py-2 rounded-xl border ${phase==='results'? 'bg-indigo-600 text-white border-indigo-600':'bg-white border-slate-300'}`} onClick={()=>setPhase('results')}>③ 查看结果</button>
-            </div>
-          </header>
-
-          {phase==='setup' && <Setup roomId={roomId} restaurants={restaurants} />}
-          {phase==='vote' && <Vote roomId={roomId} restaurants={restaurants} votes={votes} uid={user.uid} />}
-          {phase==='results' && <Results stats={stats} votesCount={Object.keys(votes).length} goVote={()=>setPhase('vote')} roomId={roomId} />}
-        </div>
-      );
     }
 
-    function Setup({ roomId, restaurants }) {
-      const [newName, setNewName] = useState("");
-      const addRestaurant = async () => {
-        const name = newName.trim(); if (!name) return;
-        const id = 'r-'+Math.random().toString(36).slice(2,9);
-        await firebase.database().ref(`rooms/${roomId}/restaurants/${id}`).set({ id, name });
-        setNewName("");
-      };
-      const rename = (id, name) => firebase.database().ref(`rooms/${roomId}/restaurants/${id}/name`).set(name);
-      const remove = (id) => firebase.database().ref(`rooms/${roomId}/restaurants/${id}`).remove();
+    /* 渲染：结果 */
+    async function renderResults(restaurants) {
+      const restEntries = Object.entries(restaurants || {});
+      resultList.innerHTML = '';
+      resultEmpty.classList.toggle('hidden', restEntries.length > 0);
 
-      return (
-        <section className="space-y-4">
-          <div className="bg-white rounded-2xl shadow p-4">
-            <div className="flex gap-2 items-center">
-              <input className="flex-1 px-3 py-2 rounded-xl border border-slate-300 focus:border-indigo-500" placeholder="输入餐厅名称并添加"
-                     value={newName} onChange={e=>setNewName(e.target.value)} />
-              <button className="px-4 py-2 rounded-xl bg-indigo-600 text-white" onClick={addRestaurant}>添加</button>
-            </div>
-          </div>
+      // 拿所有票
+      const votesSnap = await get(votesRef);
+      const votes = votesSnap.val() || {};
 
-          <div className="grid md:grid-cols-2 gap-4">
-            {Object.values(restaurants).length===0 && <div className="text-slate-500">还没有备选。先添加几家餐厅吧。</div>}
-            {Object.values(restaurants).map(r => (
-              <div key={r.id} className="bg-white rounded-2xl shadow p-4 flex items-center gap-3">
-                <input className="flex-1 px-2 py-1 rounded border border-slate-300 focus:border-indigo-500" value={r.name} onChange={e=>rename(r.id, e.target.value)} />
-                <button className="px-3 py-2 rounded-xl bg-rose-100 text-rose-700 hover:bg-rose-200" onClick={()=>remove(r.id)}>删除</button>
-              </div>
-            ))}
-          </div>
-        </section>
-      );
+      const rows = restEntries.map(([rid,item])=>{
+        const vmap = votes[rid] || {};
+        const vals = Object.values(vmap).map(n=>Number(n)).filter(n=>Number.isFinite(n));
+        const count = vals.length;
+        const avg = count ? (vals.reduce((a,b)=>a+b,0)/count) : 0;
+        return {
+          rid,
+          name: item.name,
+          count,
+          avg
+        };
+      }).sort((a,b)=> b.avg - a.avg);
+
+      rows.forEach((r, idx)=>{
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-4 px-4 py-3 items-center';
+        row.innerHTML = `
+          <div class="col-span-7 truncate">${escapeHtml(r.name)}</div>
+          <div class="col-span-3 text-slate-500">投票数：${r.count}</div>
+          <div class="col-span-2 font-semibold text-right">${r.avg ? r.avg.toFixed(2) : '-'}</div>
+        `;
+        if (idx === 0) row.classList.add('bg-amber-50');
+        resultList.appendChild(row);
+      });
     }
 
-    function Vote({ roomId, restaurants, votes, uid }) {
-      const [voter, setVoter] = useState("");
-      const [temp, setTemp] = useState({});
-      useEffect(()=>{
-        const base = {}; Object.values(restaurants).forEach(r=> base[r.id]=10); setTemp(base);
-      }, [restaurants]);
+    /* 清空票/重置 */
+    btnClearVotes.addEventListener('click', async ()=>{
+      if (!confirm('确定只清空投票？备选会保留。')) return;
+      await remove(ref(db, `rooms/${roomId}/votes`));
+      await remove(ref(db, `rooms/${roomId}/userVotes`));
+      alert('已清空本房间的所有投票。');
+    });
 
-      const submit = async () => {
-        if (Object.values(restaurants).length===0) return alert('请先添加餐厅');
-        const id = 'v-'+Math.random().toString(36).slice(2,9);
-        const scores = {}; Object.values(restaurants).forEach(r => scores[r.id] = clamp(Number(temp[r.id] ?? 10), 1, 10));
-        await firebase.database().ref(`rooms/${roomId}/votes/${id}`).set({ id, voter: (voter||'').trim() || '匿名', uid, scores, ts: Date.now() });
-        setVoter("");
-      };
-      const del = (id, ownerUid) => {
-        if (ownerUid && ownerUid !== uid) return alert('只能删除自己提交的评分');
-        firebase.database().ref(`rooms/${roomId}/votes/${id}`).remove();
-      };
+    btnResetAll.addEventListener('click', async ()=>{
+      if (!confirm('确定重置？将删除本房间的备选与投票。')) return;
+      await remove(roomRef);
+      alert('已重置房间数据。');
+    });
 
-      return (
-        <section className="space-y-6">
-          <div className="bg-white rounded-2xl shadow p-4">
-            <div className="flex flex-col md:flex-row md:items-center gap-3">
-              <input className="px-3 py-2 rounded-xl border border-slate-300 focus:border-indigo-500 md:w-64" placeholder="你的名字（可留空）" value={voter} onChange={e=>setVoter(e.target.value)} />
-              <div className="flex-1" />
-              <a className="px-4 py-2 rounded-xl bg-slate-800 text-white hover:bg-slate-900" href={location.href} target="_blank">复制/分享当前链接</a>
-            </div>
-          </div>
+    /* 三个面板切换 */
+    const setPhase = (phase) => {
+      // 样式
+      const active = 'bg-indigo-600 text-white border-indigo-600';
+      const normal = 'bg-white text-indigo-600 border-indigo-600';
+      btnSetup.className   = `px-3 py-2 rounded-xl border ${phase==='setup'   ? active : normal}`;
+      btnVote.className    = `px-3 py-2 rounded-xl border ${phase==='vote'    ? active : normal}`;
+      btnResults.className = `px-3 py-2 rounded-xl border ${phase==='results' ? active : normal}`;
 
-          <div className="space-y-4">
-            {Object.values(restaurants).map(r => (
-              <div key={r.id} className="bg-white rounded-2xl shadow p-4">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold text-lg">{r.name}</div>
-                  <RoomRestAvg roomId={roomId} rid={r.id} />
-                </div>
-                <div className="mt-3 flex items-center gap-3">
-                  <input type="range" min={1} max={10} step={1} value={temp[r.id] ?? 10} onChange={e=>setTemp(s=>({ ...s, [r.id]: Number(e.target.value) }))} className="w-full" />
-                  <div className="w-12 text-center font-mono">{temp[r.id] ?? 10}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+      panelSetup.classList.toggle('hidden',   phase!=='setup');
+      panelVote.classList.toggle('hidden',    phase!=='vote');
+      panelResults.classList.toggle('hidden', phase!=='results');
+    };
+    btnSetup.onclick   = ()=> setPhase('setup');
+    btnVote.onclick    = ()=> setPhase('vote');
+    btnResults.onclick = ()=> setPhase('results');
+    setPhase('setup'); // 默认落在“建立备选”
 
-          <div className="flex items-center gap-3">
-            <button className="px-5 py-3 rounded-2xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50" onClick={submit} disabled={Object.values(restaurants).length===0}>提交本次评分</button>
-            <div className="text-slate-500">共 {Object.keys(votes).length} 份投票</div>
-          </div>
+    /* 工具 */
+    function escapeHtml(s){ return (s??'').toString()
+      .replaceAll('&','&amp;').replaceAll('<','&lt;')
+      .replaceAll('>','&gt;').replaceAll('"','&quot;')
+      .replaceAll("'","&#39;"); }
 
-          {Object.keys(votes).length>0 && (
-            <div className="bg-white rounded-2xl shadow p-4">
-              <div className="font-semibold mb-2">已提交的评分</div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-100">
-                      <th className="text-left px-3 py-2">投票人</th>
-                      {Object.values(restaurants).map(r => <th key={r.id} className="text-left px-3 py-2">{r.name}</th>)}
-                      <th className="px-3 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.values(votes).sort((a,b)=>a.ts-b.ts).map(v => (
-                      <tr key={v.id} className="border-t">
-                        <td className="px-3 py-2 whitespace-nowrap font-medium">{v.voter}</td>
-                        {Object.values(restaurants).map(r => (
-                          <td key={r.id} className="px-3 py-2 font-mono">{v.scores?.[r.id] ?? '-'}</td>
-                        ))}
-                        <td className="px-3 py-2 text-right">
-                          <button className="text-rose-600 hover:underline" onClick={()=>del(v.id, v.uid)}>删除</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </section>
-      );
-    }
-
-    function Results({ stats, votesCount, goVote, roomId }) {
-      const clearVotes = () => {
-        if (!confirm('仅清空评分，保留备选？')) return;
-        firebase.database().ref(`rooms/${roomId}/votes`).set(null);
-      };
-      const resetAll = () => {
-        if (!confirm('重置将清空备选和评分，是否继续？')) return;
-        firebase.database().ref(`rooms/${roomId}`).update({ restaurants: null, votes: null });
-      };
-      return (
-        <section className="space-y-6">
-          <div className="bg-white rounded-2xl shadow p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xl font-semibold">平均分排行</div>
-              <div className="text-slate-500">共 {votesCount} 份投票</div>
-            </div>
-            <div className="mt-3 overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-100">
-                    <th className="text-left px-3 py-2">名次</th>
-                    <th className="text-left px-3 py-2">餐厅</th>
-                    <th className="text-left px-3 py-2">平均分</th>
-                    <th className="text-left px-3 py-2">参与人数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.rows.map((r, i) => (
-                    <tr key={r.id} className={`border-t ${i===0 && r.cnt>0 ? 'bg-amber-50' : ''}`}>
-                      <td className="px-3 py-2 font-mono">{i+1}</td>
-                      <td className="px-3 py-2 font-medium">{r.name}</td>
-                      <td className="px-3 py-2 font-mono">{r.cnt? r.avg.toFixed(2) : '-'}</td>
-                      <td className="px-3 py-2">{r.cnt}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {stats.winner ? (
-              <div className="mt-4 p-4 rounded-xl bg-emerald-600 text-white">🎉 本轮优胜：<span className="font-bold">{stats.winner.name}</span>，平均分 {stats.winner.avg.toFixed(2)}（{stats.winner.cnt} 人参与）</div>
-            ) : (
-              <div className="mt-4 text-slate-500">还没有评分数据。</div>
-            )}
-
-            <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded-xl bg-slate-800 text-white hover:bg-slate-900" onClick={goVote}>返回继续投票</button>
-              <button className="px-4 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600" onClick={clearVotes}>清空评分保留备选</button>
-              <button className="px-4 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700" onClick={resetAll}>重置为新一轮</button>
-            </div>
-          </div>
-        </section>
-      );
-    }
-
-    function RoomRestAvg({ roomId, rid }) {
-      const [avg, setAvg] = useState('-');
-      const [cnt, setCnt] = useState(0);
-      useEffect(() => {
-        const refVotes = firebase.database().ref(`rooms/${roomId}/votes`);
-        const off = refVotes.on('value', s => {
-          const votes = s.val() || {};
-          let sum = 0, c = 0;
-          Object.values(votes).forEach(v => {
-            const sc = v.scores?.[rid];
-            if (typeof sc === 'number') { sum += sc; c += 1; }
-          });
-          setAvg(c? (sum/c).toFixed(2) : '-'); setCnt(c);
-        });
-        return () => refVotes.off('value', off);
-      }, [roomId, rid]);
-      return <div className="text-sm text-slate-500">当前平均： {avg} （{cnt} 人）</div>;
-    }
-
-    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+    // 首次把标题写入（如果房间还没标题）
+    (async ()=>{
+      const snap = await get(titleRef);
+      if (!snap.exists()) await set(titleRef, titleInput.value);
+      else titleInput.value = snap.val();
+    })();
   </script>
-
-  <!-- 使用须知：
-  1）到 https://console.firebase.google.com 创建项目 → 启用 Authentication 的 Anonymous 登录；
-  2）Realtime Database 选择位置（建议 asia-southeast1 或 us-central1），创建数据库；
-  3）规则（最简示例，生产中请按需收紧）：
-     {
-       "rules": {
-         "rooms": {
-           "$room": {
-             ".read": true,
-             ".write": "auth != null"
-           }
-         }
-       }
-     }
-  4）把上面 firebaseConfig 里 YOUR_PROJECT 等替换为你的配置；
-  5）打开本 HTML，创建/加入房间（URL 会变成 ?room=xxx），把链接发朋友即可实时共享。
-  -->
 </body>
 </html>
