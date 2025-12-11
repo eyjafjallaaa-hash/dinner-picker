@@ -9,21 +9,13 @@
 </head>
 <body class="bg-slate-50 text-slate-800">
   <div class="max-w-5xl mx-auto px-4 pb-24">
-    <!-- 头部：左侧头像图 + 标题 + 房间信息 + 三个阶段按钮 -->
+    <!-- 头部：左侧单张图片 + 标题 + 房间信息 + 三个阶段按钮 -->
     <header class="py-6 flex items-center justify-between gap-4">
       <div class="min-w-0">
         <div class="flex items-center gap-3">
-          <!-- 图片：悬停切换 -->
-          <div class="relative h-20 w-20 rounded-xl overflow-hidden shadow">
-            <img src="title.jpg"
-                 class="absolute inset-0 h-full w-full object-cover transition-opacity duration-150 hover:opacity-0"
-                 alt="title icon">
-            <img src="title-hover.jpg"
-                 class="absolute inset-0 h-full w-full object-cover"
-                 alt="">
-          </div>
-        
-          <!-- 你原来的标题输入框保持不变 -->
+          <!-- 单张图片（已恢复） -->
+          <img src="title.jpg" alt="title icon" class="h-12 w-24 rounded-xl object-cover shadow" />
+          <!-- 可编辑标题（云同步） -->
           <input id="titleInput"
                  class="w-full min-w-0 text-2xl md:text-3xl font-bold bg-transparent border-b border-slate-300 focus:outline-none focus:border-indigo-500 px-1"
                  value="这周末吃什么？" />
@@ -62,13 +54,20 @@
       <p id="setupEmpty" class="text-slate-500">还没有备选。先添加几家餐厅吧。</p>
     </section>
 
-    <!-- 打分投票 -->
+    <!-- 打分投票（一次性提交所有选项的分数） -->
     <section id="panelVote" class="space-y-4 hidden">
       <div id="voteList" class="bg-white rounded-xl border divide-y"></div>
       <p id="voteEmpty" class="text-slate-500">当前还没有餐厅可投票。</p>
+      <div class="flex items-center gap-3">
+        <button id="btnSubmitAll"
+                class="px-5 py-3 rounded-2xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+          提交本次评分（一次性提交所有选项）
+        </button>
+        <span id="voteTip" class="text-slate-500 text-sm"></span>
+      </div>
     </section>
 
-    <!-- 结果 -->
+    <!-- 结果（含标准差，排序规则：均分降序 → 标准差升序 → 名称字母序；并列优胜） -->
     <section id="panelResults" class="space-y-4 hidden">
       <div class="flex gap-2">
         <button id="btnClearVotes" class="px-3 py-2 rounded-lg border bg-white text-indigo-600 border-indigo-600">
@@ -78,8 +77,23 @@
           重置（备选与投票全部清空）
         </button>
       </div>
-      <div id="resultList" class="bg-white rounded-xl border divide-y"></div>
+
+      <div class="bg-white rounded-xl border overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="text-left px-4 py-2">餐厅</th>
+              <th class="text-left px-4 py-2">参与人数</th>
+              <th class="text-left px-4 py-2">平均分</th>
+              <th class="text-left px-4 py-2">标准差</th>
+            </tr>
+          </thead>
+          <tbody id="resultTbody"></tbody>
+        </table>
+      </div>
+
       <p id="resultEmpty" class="text-slate-500">暂无结果。</p>
+      <div id="winnerBanner" class="hidden mt-2 p-4 rounded-xl bg-emerald-600 text-white"></div>
     </section>
   </div>
 
@@ -90,7 +104,7 @@
       getAuth, signInAnonymously, onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
     import {
-      getDatabase, ref, onValue, set, update, remove, get, child
+      getDatabase, ref, onValue, set, update, remove, get
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
     /* 1) 替换为你的配置 */
@@ -110,32 +124,32 @@
     const db = getDatabase(app);
 
     /* 3) DOM */
-    const titleInput = document.querySelector('#titleInput');
-    const roomSpan = document.querySelector('#roomSpan');
-
-    const btnSetup   = document.querySelector('#btnSetup');
-    const btnVote    = document.querySelector('#btnVote');
-    const btnResults = document.querySelector('#btnResults');
-
+    const titleInput   = document.querySelector('#titleInput');
+    const roomSpan     = document.querySelector('#roomSpan');
+    const btnSetup     = document.querySelector('#btnSetup');
+    const btnVote      = document.querySelector('#btnVote');
+    const btnResults   = document.querySelector('#btnResults');
     const panelSetup   = document.querySelector('#panelSetup');
     const panelVote    = document.querySelector('#panelVote');
     const panelResults = document.querySelector('#panelResults');
 
-    const restInput = document.querySelector('#restInput');
-    const btnAdd    = document.querySelector('#btnAdd');
-    const setupList = document.querySelector('#setupList');
+    const restInput  = document.querySelector('#restInput');
+    const btnAdd     = document.querySelector('#btnAdd');
+    const setupList  = document.querySelector('#setupList');
     const setupEmpty = document.querySelector('#setupEmpty');
 
-    const voteList = document.querySelector('#voteList');
-    const voteEmpty = document.querySelector('#voteEmpty');
+    const voteList   = document.querySelector('#voteList');
+    const voteEmpty  = document.querySelector('#voteEmpty');
+    const btnSubmitAll = document.querySelector('#btnSubmitAll');
+    const voteTip      = document.querySelector('#voteTip');
 
-    const resultList = document.querySelector('#resultList');
+    const resultTbody = document.querySelector('#resultTbody');
     const resultEmpty = document.querySelector('#resultEmpty');
-
+    const winnerBanner = document.querySelector('#winnerBanner');
     const btnClearVotes = document.querySelector('#btnClearVotes');
     const btnResetAll   = document.querySelector('#btnResetAll');
 
-    /* 4) 房间 ID */
+    /* 4) 房间 ID：无参则默认 default_room（你之前的需求） */
     const params = new URLSearchParams(location.search);
     const roomId = params.get('room') || 'default_room';
     roomSpan.textContent = roomId;
@@ -146,23 +160,20 @@
     onAuthStateChanged(auth, (user) => { uid = user?.uid || null; });
 
     /* 数据路径 */
-    const roomRef     = ref(db, `rooms/${roomId}`);
-    const titleRef    = ref(db, `rooms/${roomId}/title`);
-    const restRef     = ref(db, `rooms/${roomId}/restaurants`);
-    const votesRef    = ref(db, `rooms/${roomId}/votes`);
+    const roomRef   = ref(db, `rooms/${roomId}`);
+    const titleRef  = ref(db, `rooms/${roomId}/title`);
+    const restRef   = ref(db, `rooms/${roomId}/restaurants`);
+    const votesRef  = ref(db, `rooms/${roomId}/votes`);
+    const myVotesRef = () => ref(db, `rooms/${roomId}/userVotes/${uid}`);
 
     /* 6) 同步标题 */
-    // 推 -> 云
-    titleInput.addEventListener('input', (e) => {
-      set(titleRef, e.target.value);
-    });
-    // 云 -> 拉
+    titleInput.addEventListener('input', (e) => set(titleRef, e.target.value));
     onValue(titleRef, (snap) => {
       const v = snap.val();
       if (typeof v === 'string' && v !== titleInput.value) titleInput.value = v;
     });
 
-    /* 7) 添加餐厅 */
+    /* 7) 添加/删除餐厅 */
     btnAdd.addEventListener('click', async () => {
       const name = (restInput.value || '').trim();
       if (!name) return;
@@ -173,16 +184,14 @@
       restInput.value = '';
     });
 
-    /* 8) 监听餐厅列表 */
     onValue(restRef, (snap) => {
       const data = snap.val() || {};
       renderSetupList(data);
       renderVoteList(data);
       renderResults(data);
     });
-    /* 9) 监听投票变化 */
+
     onValue(votesRef, () => {
-      // 只需更新投票区 & 结果区
       get(restRef).then(s => {
         const data = s.val() || {};
         renderVoteList(data);
@@ -190,7 +199,6 @@
       });
     });
 
-    /* 渲染：建立备选 */
     function renderSetupList(restaurants) {
       const entries = Object.entries(restaurants || {});
       setupList.innerHTML = '';
@@ -212,20 +220,20 @@
           row.querySelector('button').addEventListener('click', async (e)=>{
             const rid = e.currentTarget.getAttribute('data-id');
             await remove(ref(db, `rooms/${roomId}/restaurants/${rid}`));
-            await remove(ref(db, `rooms/${roomId}/votes/${rid}`)); // 顺手清理该餐厅的票
+            await remove(ref(db, `rooms/${roomId}/votes/${rid}`)); // 清理该餐厅对应的票
           });
           setupList.appendChild(row);
         });
     }
 
-    /* 渲染：投票 */
+    /* 渲染投票（无单项提交按钮，统一在底部“提交本次评分”一次性提交） */
     async function renderVoteList(restaurants) {
       const restEntries = Object.entries(restaurants || {});
       voteList.innerHTML = '';
       voteEmpty.classList.toggle('hidden', restEntries.length > 0);
-      // 取我自己的票
-      const myVotesSnap = await get(ref(db, `rooms/${roomId}/userVotes/${uid}`));
-      const myVotes = myVotesSnap.val() || {};
+      voteTip.textContent = restEntries.length ? '请为每个餐厅输入 1~10 的整数分，然后点击下方“提交本次评分”。' : '';
+
+      const my = (await get(myVotesRef())).val() || {};
 
       for (const [rid, item] of restEntries) {
         const row = document.createElement('div');
@@ -233,59 +241,93 @@
         row.innerHTML = `
           <div class="font-medium">${escapeHtml(item.name)}</div>
           <div class="flex items-center gap-2">
-            <input type="number" min="1" max="10" step="1"
+            <input data-rid="${rid}" type="number" min="1" max="10" step="1"
                    class="w-20 bg-white px-3 py-2 rounded-lg border text-center"
-                   value="${myVotes[rid] || ''}" placeholder="1~10" />
-            <button class="px-3 py-2 rounded-lg bg-indigo-600 text-white">提交</button>
+                   value="${Number.isFinite(my[rid]) ? my[rid] : ''}" placeholder="1~10" />
           </div>
         `;
-        const input = row.querySelector('input');
-        const btn = row.querySelector('button');
-        btn.addEventListener('click', async ()=>{
-          const v = Number(input.value);
-          if (!Number.isFinite(v) || v < 1 || v > 10) return alert('请输入 1~10 的整数');
-          // 记录“每人最后一次评分”为准
-          await update(ref(db, `rooms/${roomId}/votes/${rid}`), { [uid]: v });
-          await update(ref(db, `rooms/${roomId}/userVotes/${uid}`), { [rid]: v });
-        });
         voteList.appendChild(row);
       }
     }
 
-    /* 渲染：结果 */
+    /* 一次性提交所有分数 */
+    btnSubmitAll.addEventListener('click', async () => {
+      const inputs = voteList.querySelectorAll('input[data-rid]');
+      if (!inputs.length) return alert('没有可投票的餐厅。');
+
+      const scores = {};
+      for (const input of inputs) {
+        const rid = input.getAttribute('data-rid');
+        const v = Number(input.value);
+        if (!Number.isFinite(v) || v < 1 || v > 10) {
+          input.focus();
+          return alert('请为所有餐厅输入 1~10 的整数分后再提交。');
+        }
+        scores[rid] = Math.round(v);
+      }
+
+      // 批量写入：每个餐厅记录“uid: score”；同时更新我的 userVotes
+      const updates = {};
+      for (const [rid, v] of Object.entries(scores)) {
+        updates[`rooms/${roomId}/votes/${rid}/${uid}`] = v;
+        updates[`rooms/${roomId}/userVotes/${uid}/${rid}`] = v;
+      }
+      await update(ref(db), updates);
+      alert('已提交你对所有餐厅的评分！');
+    });
+
+    /* 结果渲染：计算平均分与标准差，排序与并列优胜 */
     async function renderResults(restaurants) {
       const restEntries = Object.entries(restaurants || {});
-      resultList.innerHTML = '';
+      resultTbody.innerHTML = '';
       resultEmpty.classList.toggle('hidden', restEntries.length > 0);
+      winnerBanner.classList.add('hidden');
+      winnerBanner.textContent = '';
 
-      // 拿所有票
       const votesSnap = await get(votesRef);
       const votes = votesSnap.val() || {};
-
-      const rows = restEntries.map(([rid,item])=>{
+      const rows = restEntries.map(([rid, item]) => {
         const vmap = votes[rid] || {};
-        const vals = Object.values(vmap).map(n=>Number(n)).filter(n=>Number.isFinite(n));
+        const vals = Object.values(vmap).map(n => Number(n)).filter(n => Number.isFinite(n));
         const count = vals.length;
-        const avg = count ? (vals.reduce((a,b)=>a+b,0)/count) : 0;
-        return {
-          rid,
-          name: item.name,
-          count,
-          avg
-        };
-      }).sort((a,b)=> b.avg - a.avg);
-
-      rows.forEach((r, idx)=>{
-        const row = document.createElement('div');
-        row.className = 'grid grid-cols-12 gap-4 px-4 py-3 items-center';
-        row.innerHTML = `
-          <div class="col-span-7 truncate">${escapeHtml(r.name)}</div>
-          <div class="col-span-3 text-slate-500">投票数：${r.count}</div>
-          <div class="col-span-2 font-semibold text-right">${r.avg ? r.avg.toFixed(2) : '-'}</div>
-        `;
-        if (idx === 0) row.classList.add('bg-amber-50');
-        resultList.appendChild(row);
+        const avg = count ? vals.reduce((a,b)=>a+b,0)/count : 0;
+        const std = count ? Math.sqrt(vals.reduce((s,x)=> s + Math.pow(x-avg,2), 0)/count) : 0; // 总体标准差
+        return { rid, name: item.name, count, avg, std };
       });
+
+      // 排序：均分降序 -> 标准差升序 -> 名称（稳定）
+      rows.sort((a,b) => (b.avg - a.avg) || (a.std - b.std) || a.name.localeCompare(b.name));
+
+      // 判定优胜：均分最大者里标准差最小者；允许并列（均分与标准差都相等）
+      const eps = 1e-9;
+      const bestAvg = rows.reduce((m,r)=> Math.max(m, r.avg || 0), 0);
+      const topByAvg = rows.filter(r => Math.abs(r.avg - bestAvg) < eps);
+      const bestStd = topByAvg.reduce((m,r)=> Math.min(m, r.std || 0), Number.POSITIVE_INFINITY);
+      const winners = rows.filter(r => Math.abs(r.avg - bestAvg) < eps && Math.abs(r.std - bestStd) < eps && r.count > 0);
+
+      // 渲染表格
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const isWinner = winners.some(w => w.rid === r.rid);
+        tr.className = `border-t ${isWinner ? 'bg-amber-50' : ''}`;
+        tr.innerHTML = `
+          <td class="px-4 py-2">${escapeHtml(r.name)}</td>
+          <td class="px-4 py-2">${r.count}</td>
+          <td class="px-4 py-2 font-mono">${r.count ? r.avg.toFixed(2) : '-'}</td>
+          <td class="px-4 py-2 font-mono">${r.count ? r.std.toFixed(2) : '-'}</td>
+        `;
+        resultTbody.appendChild(tr);
+      });
+
+      // 优胜横幅
+      if (winners.length) {
+        const names = winners.map(w => w.name).join('、');
+        const text = winners.length === 1
+          ? `🎉 本轮优胜：${names}（平均分 ${winners[0].avg.toFixed(2)}，标准差 ${winners[0].std.toFixed(2)}）`
+          : `🎉 本轮并列优胜：${names}（平均分 ${bestAvg.toFixed(2)}，标准差 ${bestStd.toFixed(2)}）`;
+        winnerBanner.textContent = text;
+        winnerBanner.classList.remove('hidden');
+      }
     }
 
     /* 清空票/重置 */
@@ -304,7 +346,6 @@
 
     /* 三个面板切换 */
     const setPhase = (phase) => {
-      // 样式
       const active = 'bg-indigo-600 text-white border-indigo-600';
       const normal = 'bg-white text-indigo-600 border-indigo-600';
       btnSetup.className   = `px-3 py-2 rounded-xl border ${phase==='setup'   ? active : normal}`;
