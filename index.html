@@ -263,11 +263,12 @@
     /* 渲染投票（一次性提交所有） */
     async function renderVoteList(restaurants) {
       const restEntries = Object.entries(restaurants || {});
+      
+      const my = uid ? (await get(myVotesRef())).val() || {} : {};
+
       voteList.innerHTML = '';
       voteEmpty.classList.toggle('hidden', restEntries.length > 0);
       voteTip.textContent = restEntries.length ? '请为每个餐厅输入 1~10 的整数分，然后点击下方“提交本次评分”。' : '';
-
-      const my = uid ? (await get(myVotesRef())).val() || {} : {};
 
       for (const [rid, item] of restEntries) {
         const row = document.createElement('div');
@@ -313,12 +314,14 @@
     /* 结果渲染：平均分与标准差，排序与并列优胜 */
     async function renderResults(restaurants) {
       const restEntries = Object.entries(restaurants || {});
+
+      const votesSnap = await get(votesRef);
+      
       resultTbody.innerHTML = '';
       resultEmpty.classList.toggle('hidden', restEntries.length > 0);
       winnerBanner.classList.add('hidden');
       winnerBanner.textContent = '';
 
-      const votesSnap = await get(votesRef);
       const votes = votesSnap.val() || {};
       const rows = restEntries.map(([rid, item]) => {
         const vmap = votes[rid] || {};
