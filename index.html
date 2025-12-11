@@ -13,8 +13,8 @@
     <header class="py-6 flex items-center justify-between gap-4">
       <div class="min-w-0">
         <div class="flex items-center gap-3">
-          <!-- 单张图片（已恢复） -->
-          <img src="title.jpg" alt="title icon" class="h-12 w-24 rounded-xl object-cover shadow" />
+          <!-- 单张图片 -->
+          <img src="title.jpg" alt="title icon" class="h-12 w-12 rounded-xl object-cover shadow" />
           <!-- 可编辑标题（云同步） -->
           <input id="titleInput"
                  class="w-full min-w-0 text-2xl md:text-3xl font-bold bg-transparent border-b border-slate-300 focus:outline-none focus:border-indigo-500 px-1"
@@ -45,7 +45,7 @@
     <section id="panelSetup" class="space-y-4">
       <div class="flex items-center gap-2">
         <input id="restInput" class="flex-1 bg-white px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-200"
-               placeholder="输入餐厅名称并添加" />
+               placeholder="输入餐厅名称并添加（回车也可）" />
         <button id="btnAdd" class="px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
           添加
         </button>
@@ -67,7 +67,7 @@
       </div>
     </section>
 
-    <!-- 结果（含标准差，排序规则：均分降序 → 标准差升序 → 名称字母序；并列优胜） -->
+    <!-- 结果（含标准差，排序：均分降序 → 标准差升序 → 名称；并列优胜） -->
     <section id="panelResults" class="space-y-4 hidden">
       <div class="flex gap-2">
         <button id="btnClearVotes" class="px-3 py-2 rounded-lg border bg-white text-indigo-600 border-indigo-600">
@@ -107,7 +107,7 @@
       getDatabase, ref, onValue, set, update, remove, get
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
-    /* 1) 替换为你的配置 */
+    /* 1) 你的 Firebase 配置（已填入） */
     const firebaseConfig = {
       apiKey: "AIzaSyA_C6M0rRXkhfFU_9pFuFBX5FxMOyWoeaY",
       authDomain: "dinner-picker-7dd8f.firebaseapp.com",
@@ -149,7 +149,7 @@
     const btnClearVotes = document.querySelector('#btnClearVotes');
     const btnResetAll   = document.querySelector('#btnResetAll');
 
-    /* 4) 房间 ID：无参则默认 default_room（你之前的需求） */
+    /* 4) 房间 ID：无参则默认 default_room */
     const params = new URLSearchParams(location.search);
     const roomId = params.get('room') || 'default_room';
     roomSpan.textContent = roomId;
@@ -173,15 +173,49 @@
       if (typeof v === 'string' && v !== titleInput.value) titleInput.value = v;
     });
 
-    /* 7) 添加/删除餐厅 */
-    btnAdd.addEventListener('click', async () => {
-      const name = (restInput.value || '').trim();
-      if (!name) return;
-      const id = (Date.now() + '_' + Math.random().toString(36).slice(2, 7));
-      await set(ref(db, `rooms/${roomId}/restaurants/${id}`), {
-        name, createdAt: Date.now()
-      });
-      restInput.value = '';
+    /* 7) 添加/删除餐厅 —— 去重 + 防连点 + Enter支持 */
+    let addingLock = false;
+
+    async function addRestaurant() {
+      if (addingLock) return;
+      addingLock = true;
+      btnAdd.disabled = true;
+
+      try {
+        let name = (restInput.value || '').trim();
+        if (!name) return;
+
+        // 规范化：压缩多余空格
+        name = name.replace(/\s+/g, ' ');
+
+        // 读取现有餐厅，做“同名去重”（不区分大小写）
+        const snap = await get(restRef);
+        const existing = snap.val() || {};
+        const exists = Object.values(existing).some(r =>
+          (r?.name || '').toLowerCase() === name.toLowerCase()
+        );
+        if (exists) {
+          alert('这个餐厅已经在备选中了～');
+          restInput.value = '';
+          return;
+        }
+
+        // 生成 id 并写入
+        const id = 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        await set(ref(db, `rooms/${roomId}/restaurants/${id}`), {
+          name, createdAt: Date.now()
+        });
+
+        restInput.value = '';
+      } finally {
+        addingLock = false;
+        btnAdd.disabled = false;
+      }
+    }
+
+    btnAdd.addEventListener('click', addRestaurant);
+    restInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addRestaurant();
     });
 
     onValue(restRef, (snap) => {
@@ -226,14 +260,14 @@
         });
     }
 
-    /* 渲染投票（无单项提交按钮，统一在底部“提交本次评分”一次性提交） */
+    /* 渲染投票（一次性提交所有） */
     async function renderVoteList(restaurants) {
       const restEntries = Object.entries(restaurants || {});
       voteList.innerHTML = '';
       voteEmpty.classList.toggle('hidden', restEntries.length > 0);
       voteTip.textContent = restEntries.length ? '请为每个餐厅输入 1~10 的整数分，然后点击下方“提交本次评分”。' : '';
 
-      const my = (await get(myVotesRef())).val() || {};
+      const my = uid ? (await get(myVotesRef())).val() || {} : {};
 
       for (const [rid, item] of restEntries) {
         const row = document.createElement('div');
@@ -276,7 +310,7 @@
       alert('已提交你对所有餐厅的评分！');
     });
 
-    /* 结果渲染：计算平均分与标准差，排序与并列优胜 */
+    /* 结果渲染：平均分与标准差，排序与并列优胜 */
     async function renderResults(restaurants) {
       const restEntries = Object.entries(restaurants || {});
       resultTbody.innerHTML = '';
